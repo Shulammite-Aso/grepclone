@@ -29,9 +29,11 @@ func main() {
 
 	var workersWg sync.WaitGroup
 
+	var mu sync.Mutex
+
 	wl := worklist.New(100)
 
-	results := make(chan worker.Result, 100)
+	var results []worker.Result
 
 	numWorkers := 10
 
@@ -51,9 +53,9 @@ func main() {
 				if workEntry.Path != "" {
 					workerResult := worker.FindInFile(workEntry.Path, os.Args[1])
 					if workerResult != nil {
-						for _, r := range workerResult.Inner {
-							results <- r
-						}
+						mu.Lock()
+						results = append(results, workerResult.Inner...)
+						mu.Unlock()
 					}
 				} else {
 					// When the path is empty, this indicates that there are no more jobs available,
@@ -64,30 +66,8 @@ func main() {
 		}()
 	}
 
-	blockWorkersWg := make(chan struct{})
-	go func() {
-		workersWg.Wait()
-		// Close channel
-		close(blockWorkersWg)
-	}()
-
-	var displayWg sync.WaitGroup
-
-	displayWg.Add(1)
-
-	go func() {
-		for {
-			select {
-			case r := <-results:
-				fmt.Printf("%v[%v]:%v\n", r.Path, r.LineNum, r.Line)
-			case <-blockWorkersWg:
-				// Make sure all results has been printed before terminating goroutine
-				if len(results) == 0 {
-					displayWg.Done()
-					return
-				}
-			}
-		}
-	}()
-	displayWg.Wait()
+	workersWg.Wait()
+	for _, r := range results {
+		fmt.Printf("%v[%v]:%v\n", r.Path, r.LineNum, r.Line)
+	}
 }
